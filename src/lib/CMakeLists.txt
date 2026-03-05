@@ -2,6 +2,7 @@
 
 add_library(idasql STATIC
     src/database.cpp
+    src/session.cpp
     src/entities.cpp
     src/entities_ext.cpp
     src/entities_dbg.cpp
@@ -44,7 +45,12 @@ set_target_properties(idasql PROPERTIES OUTPUT_NAME "libidasql")
 
 target_precompile_headers(idasql PRIVATE src/ida_headers.hpp)
 
-target_link_libraries(idasql PUBLIC xsql::xsql idasdk::idalib)
+# SDK compilation requirements only — no library linkage.
+# Consumers bring their own SDK target (idasdk::plugin or idasdk::idalib).
+target_link_libraries(idasql PUBLIC xsql::xsql)
+target_link_libraries(idasql PRIVATE ida_platform_settings ida_compiler_settings)
+target_include_directories(idasql PUBLIC "${idasdk_INCLUDE_DIRS}")
+target_compile_definitions(idasql PRIVATE IDALIB_IMPL)
 
 # Export the library target
 # install(TARGETS idasql EXPORT idasqlTargets)
