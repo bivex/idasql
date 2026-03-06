@@ -1,197 +1,319 @@
 # IDASQL
 
-Query IDA Pro databases with SQL.
+**Give any AI agent the ability to understand compiled binaries.**
+
+IDASQL is a SQL interface for IDA Pro databases, created by [Elias Bachaalany](https://github.com/0xeb). It exposes 30+ virtual tables covering functions, cross-references, strings, types, imports, disassembly, and decompilation. Use `/idasql` skills from your coding agent to work fully headlessly -- the agent runs IDA in the background for you -- or open IDA's UI and collaborate with your coding agent to reverse engineer together. No IDAPython. No scripting. Just SQL.
+
+> **Why SQL?** SQL is the universal query language that every AI agent already speaks. IDASQL is agent-agnostic: Claude, ChatGPT, Copilot, Cursor, custom agents, or no agent at all. Any tool that can issue a SQL query can analyze a binary.
+
+- **No indexing required.** IDA already has everything indexed. Queries run instantly against the live database.
+- **No scripting needed.** 30+ SQL tables replace hundreds of lines of IDAPython.
+- **Headless, GUI, or both.** Run fully headlessly, inside IDA's UI, or connect multiple databases simultaneously.
+- **Read and write.** IDASQL is not just a query tool. It allows reading **and writing** the most important aspects of an IDA database: decompilation comments, type recovery, type application (structure and union offsets), detecting type casts, and automatically guessing and updating the correct prototype.
+
+IDASQL supports analyzing, cross-referencing, and transferring annotations between one or more databases at the same time. What you can do is limited only by your imagination and the power of the model you use.
+
+## How It Works
+
+IDA Pro already has its own database format describing functions, strings, cross-references, types, and more. IDASQL maps these internal structures to *live* [SQL virtual tables](https://github.com/0xeb/libxsql). There is no separate exporting or indexing step -- queries execute directly against IDA's database and changes are reflected live.
+
+| Mode | How to start | Best for |
+|------|-------------|----------|
+| **Standalone CLI** | `idasql -s binary.i64 -i` | Direct SQL, scripting, pipelines |
+| **IDA Plugin** | Select `idasql` from IDA's CLI dropdown | SQL inside the GUI, live database |
+| **Skill Workflow** | `/idasql:connect` in your coding CLI | AI-driven analysis -- the agent issues SQL queries autonomously |
 
 ```
-you:       /idasql analyze this binary; tell me the most called function
-assistant: __security_check_cookie has the highest fan-in (1,247 callers).
-           It is likely the compiler stack-cookie check used by MSVC.
-```
-
-Use any workflow you prefer:
-- Run SQL directly in `idasql`
-- Use `.http`/`--http` for stateless automation
-- Use `.mcp`/`--mcp` when built with `-DIDASQL_WITH_MCP=ON`
-- Pair with your favorite coding CLI and the `/idasql` skill
-
-IDASQL exposes IDA Pro databases as SQL tables.
-
-Works as a **standalone CLI** (query `.i64` files directly) or as an **IDA plugin** (query the open database). No scripting. No IDAPython. Just SQL.
-
-**No indexing required.** IDA already has everything indexed. Queries run instantly against the live database.
-
-## Features
-
-- **SQL Interface** - Full SQL access to functions, strings, imports, xrefs, instructions, types
-- **Unified Entity Search** - `grep` table + `grep()` function search functions, labels, segments, types, members, and enums
-- **Standalone CLI** - Query `.i64` files without opening IDA GUI
-- **IDA Plugin** - SQL interface inside IDA's command line
-- **Remote Server** - Query IDA from external tools via HTTP or MCP
-- **Optional MCP** - Build-time flag (`-DIDASQL_WITH_MCP=ON`), off by default
-
-## Screenshots
-
-### CLI - Single Query
-
-Run one query and exit. Useful for scripts and pipelines.
-
-```bash
-idasql -s database.i64 -q "SELECT * FROM funcs LIMIT 5"
-```
-
-![CLI Single Query](assets/idasql_cli_one_query.jpg)
-
-### CLI - Interactive Mode
-
-Launch a REPL for exploratory analysis. Type SQL directly at the prompt.
-
-```bash
-idasql -s database.i64 -i
+You / Agent  -->  Natural language or SQL
+                        |
+                  /idasql skills (LLM translates intent to SQL)
+                        |
+                     IDASQL  -->  IDA database(s)
+                        |
+                     Results  -->  LLM summarizes & reasons
 ```
 
 ```
-idasql> SELECT COUNT(*) FROM strings;
-idasql> SELECT name FROM funcs WHERE size > 1000;
-idasql> .tables          -- list available tables
-idasql> .schema funcs    -- show table schema
-idasql> .http start      -- start HTTP server from REPL
-idasql> .mcp start       -- start MCP server from REPL (if built with MCP)
-idasql> .quit            -- exit
+$ idasql -s WerFaultTool.exe.i64 -q "SELECT * FROM funcs LIMIT 5"
+Opening: WerFaultTool.exe.i64...
+Database opened successfully.
+
++---------+------------------------------------------------+------+--------+-------+
+| address | name                                           | size | end_ea | flags |
++---------+------------------------------------------------+------+--------+-------+
+| 16      | WerFaultTool.AboutForm::.ctor                  | 13   | 29     | 4096  |
+| 32      | WerFaultTool.AboutForm::Dispose                | 30   | 62     | 4096  |
+| 64      | WerFaultTool.AboutForm::InitializeComponent    | 295  | 359    | 4096  |
+| 400     | WerFaultTool.WerFaultGUI::.ctor                | 936  | 1336   | 4096  |
+| 1344    | WerFaultTool.WerFaultGUI::CreateDynamicControls | 231  | 1575   | 4096  |
++---------+------------------------------------------------+------+--------+-------+
+5 row(s)
 ```
-
-![CLI Interactive](assets/idasql_cli_interactive_1.jpg)
-
-### Skill Workflow (External CLI)
-
-```bash
-idasql -s database.i64 --http 8081
-# or, if built with -DIDASQL_WITH_MCP=ON:
-idasql -s database.i64 --mcp
-```
-
-In your favorite coding CLI, use the `/idasql` skill:
-```
-/idasql analyze this binary; tell me the most called functions.
-/idasql find functions that reference "password" strings and rank by xrefs.
-/idasql show callers of CreateFileW and summarize error handling.
-```
-
-![CLI Skill Workflow](assets/idasql_cli_handoff_1.jpg)
-
-### IDA Plugin
-
-Select `idasql` from the CLI dropdown at the bottom of IDA:
-
-![Plugin CLI Select](assets/idasql_plugin_cli_select.jpg)
-
-Type SQL directly, or expose the open database through `.http` / `.mcp` for external tooling:
-
-```
-idasql> SELECT name, size FROM funcs ORDER BY size DESC LIMIT 10;
-idasql> .http start
-idasql> .mcp start
-```
-
-![Plugin Workflow](assets/idasql_plugin_handoff_1.jpg)
-
-### HTTP Server
-
-The plugin can run an HTTP server for scripting and tooling workflows:
-
-```bash
-idasql -s database.i64 --http 8081 --token <token>
-curl -X POST http://127.0.0.1:8081/query -H "Authorization: Bearer <token>" -d "SELECT COUNT(*) FROM funcs"
-```
+*One command. Instant results. No scripting required.*
 
 ## Quick Start
 
-### CLI
+After [installing](#installation) the IDASQL CLI and plugin, start your favorite coding agent and begin reverse engineering by prompting. IDASQL runs fully headlessly -- your agent orchestrates IDA Pro: starting, analyzing, decompiling, annotating, saving -- or hosted inside the IDA GUI where you collaborate with your agent in real time.
+
+### Getting Started
+
+Open your favorite coding agent (e.g. Claude Code) and type:
+
+```
+/idasql:connect Please open sample_malware.exe in the background and let's analyze it together.
+```
+
+The agent starts IDASQL headlessly in the background. From this point on, chat naturally with the database. For instance:
+
+```
+/idasql:annotations Fully annotate the function I'm looking at, also use the decompiler skill.
+```
+
+The model autonomously reasons about the best approach to understand the function, fully reverse engineers it, and annotates it.
+
+When you're done, ask the agent to save and shut down:
+
+```
+/idasql:connect Please save all databases and shut down IDASQL.
+```
+
+### Working with Multiple Databases
+
+You can work with two or more databases simultaneously. Prompt your agent:
+
+```
+/idasql:connect In this folder, there are many *.exe files. Please use parallel agents to open IDASQL in the background and report how many functions each has.
+```
+
+Then follow up:
+
+```
+Tell me, how many strings all these databases have in common?
+```
+
+The agent works with all databases at the same time. You can cross-reference, compare, and transfer annotations between them.
+
+### Working with IDA UI
+
+Everything above works equally from the IDA GUI. To engage your agent with an open IDA session:
+
+1. In IDA's `idasql>` prompt, type:
+
+   ```
+   .http start
+   ```
+
+2. IDA outputs:
+
+   ```
+   IDASQL HTTP server: http://127.0.0.1:8174
+   ```
+
+3. In your coding agent:
+
+   ```
+   /idasql:connect Let's work with this database: http://127.0.0.1:8174
+   ```
+
+Now IDASQL and your IDA UI are connected and working together.
+
+## Installation
+
+### Coding Agent Plugins
+
+IDASQL skills give your coding agent full control over IDA databases through natural language.
+
+- **Claude Code** -- full plugin with 14 topic-focused skills. Install via `/install-plugin` (see below).
+- **GitHub Copilot CLI** -- also supports IDASQL skills. Install the same plugin.
+- **Codex (OpenAI)** -- supports skills. Point Codex to the `Skills/` folder from the [idasql-skills](https://github.com/allthingsida/idasql-skills) repository.
+
+#### Prerequisites
+
+1. **IDA Pro** installed with its directory in your PATH (`ida.exe` on Windows, `ida` on macOS/Linux)
+2. **idasql** downloaded from [Releases](https://github.com/allthingsida/idasql/releases) and placed next to the IDA binary
+3. Verify setup: `idasql --version` should work from command line
+
+#### Install
 
 ```bash
-# Single query
-idasql -s database.i64 -q "SELECT name, address FROM funcs LIMIT 10"
-
-# Interactive mode
-idasql -s database.i64 -i
-
-# Run SQL script
-idasql -s database.i64 -f queries.sql
-
-# Save modifications on exit
-idasql -s database.i64 -i -w
-
-# Export all tables
-idasql -s database.i64 --export dump.sql
+claude /install-plugin https://github.com/allthingsida/idasql-skills
 ```
 
-### IDA Plugin
+#### Skills
 
-1. Build and install the plugin
-2. Open a database in IDA
-3. Select `idasql` from the command interpreter dropdown
-4. Type SQL directly
+| Skill | Description |
+|-------|-------------|
+| `connect` | Connect to IDA databases: CLI, HTTP server, session bootstrap, skill routing, global contracts. |
+| `disassembly` | Query IDA disassembly: functions, segments, instructions, blocks, operands, graphs. |
+| `data` | Query IDA strings, bytes, and binary data: search, rebuild, byte patterns. |
+| `xrefs` | Analyze IDA cross-references: callers, callees, imports, data refs, grep search. |
+| `decompiler` | Decompile IDA functions: pseudocode, ctree AST, local variables, labels. |
+| `annotations` | Edit IDA databases: comments, renames, types, bookmarks, enum/struct rendering. |
+| `types` | IDA type system: create/modify/apply structs, unions, enums, typedefs, parse_decls. |
+| `debugger` | IDA debugger: breakpoints, byte patching, conditions, patch inventory. |
+| `storage` | Persistent key-value storage in IDA databases via netnode_kv. |
+| `idapython` | Execute IDAPython via idasql: snippets, sandbox, output capture. |
+| `functions` | Complete idasql SQL function reference catalog. |
+| `analysis` | Analyze IDA binaries: triage, security audit, crypto/network detection, multi-table queries. |
+| `resource` | Re-source IDA binaries: recursive annotation, structure recovery, type reconstruction. |
+| `ui-context` | Capture live IDA UI context: screen, selection, widget focus, address anchors. |
 
-```sql
-SELECT name, printf('0x%X', address) as addr FROM funcs WHERE size > 1000;
+#### Example Prompts
+
+```
+/idasql:analysis analyze this binary; tell me the most called functions.
+/idasql:data find functions that reference "password" strings and rank by xrefs.
+/idasql:xrefs show callers of CreateFileW and summarize error handling.
+/idasql:data identify suspicious hardcoded URLs and the functions that reference them.
 ```
 
-Plugin-only UI context query:
+*The `/idasql` skills drive analysis from your coding CLI -- no IDAPython scripting required.*
 
-```sql
-SELECT get_ui_context_json();
+<details>
+<summary>CLI Help</summary>
+
+```
+$ idasql
+Error: Database path required (-s)
+
+idasql v0.0.10 - SQL interface to IDA databases
+
+Usage: idasql -s <database> [-q <query>] [-f <file>] [-i] [--export <file>]
+
+Options:
+  -s <file>            IDA database file (.idb/.i64) for local mode
+  --token <token>      Auth token for HTTP/MCP server mode (if server requires it)
+  -q <sql>             Execute single SQL query
+  -f <file>            Execute SQL from file
+  -i                   Interactive REPL mode
+  -w, --write          Save database on exit (persist changes)
+  --export <file>      Export tables to SQL file (local mode only)
+  --export-tables=X    Tables to export: * (all, default) or table1,table2,...
+  --http [port]        Start HTTP REST server (default: 8080, local mode only)
+  --bind <addr>        Bind address for HTTP/MCP server (default: 127.0.0.1)
+  -h, --help           Show this help
+  --version            Show version
+
+Examples:
+  idasql -s test.i64 -q "SELECT name, address FROM funcs LIMIT 10"
+  idasql -s test.i64 -f queries.sql
+  idasql -s test.i64 -i
+  idasql -s test.i64 --export dump.sql
+  idasql -s test.i64 --http 8080
+
+Thank you for using IDA. Have a nice day!
 ```
 
-`get_ui_context_json()` is available in GUI plugin runtime only (not idalib/CLI mode).
+</details>
+
+### Building from Source
+
+#### Prerequisites
+
+- CMake 3.20+
+- C++17 compiler
+- IDA SDK 9.0+ (set `IDASDK` environment variable)
+
+```bash
+cmake -S src -B build -DIDASQL_WITH_MCP=OFF
+cmake --build build --config Release
+```
 
 ## Available Tables
+
+30+ virtual tables covering functions, strings, types, cross-references, disassembly, decompilation, and more.
+
+### Core
 
 | Table | Description |
 |-------|-------------|
 | `funcs` | Functions - name, address, size, end address, flags (INSERT/UPDATE/DELETE) |
 | `segments` | Segments - name, start/end address, permissions, class (UPDATE/DELETE) |
 | `names` | Named locations - address, name, flags (INSERT/UPDATE/DELETE) |
-| `imports` | Imports - module, name, address, ordinal |
 | `entries` | Entry points - export/program/tls callbacks (ordinal, address, name) |
-| `strings` | Strings - address, content, length, type |
+| `imports` | Imports - module, name, address, ordinal |
 | `xrefs` | Cross-references - from/to address, type, is_code |
-| `instructions` | Disassembly - address, mnemonic, operands, itype, func_addr (DELETE) |
 | `blocks` | Basic blocks - start/end address, func_ea, size |
+| `fchunks` | Function chunks - split/tail chunks with owner |
+| `instructions` | Disassembly - address, mnemonic, operands, itype, func_addr (DELETE) |
+| `heads` | All head items (code + data) - address, size, type, flags, disasm |
+
+### Strings & Bytes
+
+| Table | Description |
+|-------|-------------|
+| `strings` | Strings - address, content, length, type |
+| `bytes` | Raw bytes - address, value, original value, size, type, patch detection |
+| `patched_bytes` | Byte patches - original vs patched values, file position |
+
+### Decompiler
+
+| Table | Description |
+|-------|-------------|
+| `pseudocode` | Decompiled pseudocode via Hex-Rays |
+| `ctree` | Hex-Rays ctree AST nodes |
+| `ctree_lvars` | Local variables from Hex-Rays decompilation |
+| `ctree_call_args` | Hex-Rays call argument details per call site |
+| `ctree_labels` | Hex-Rays ctree labels (goto targets) |
+
+### Types
+
+| Table | Description |
+|-------|-------------|
 | `types` | Type library - structs, unions, enums with members (INSERT/UPDATE/DELETE) |
+| `types_members` | Struct/union member details (INSERT/UPDATE/DELETE) |
+| `types_enum_values` | Enum member values (INSERT/UPDATE/DELETE) |
+| `types_func_args` | Function type argument details |
+| `local_types` | Local type library entries |
+
+### Annotations
+
+| Table | Description |
+|-------|-------------|
+| `comments` | Comments - address, regular and repeatable comments (INSERT/UPDATE/DELETE) |
+| `bookmarks` | Bookmarks - slot, address, description (INSERT/UPDATE/DELETE) |
 | `breakpoints` | Breakpoints - address, type, enabled, condition (full CRUD) |
-| `grep` | Unified entity search table (`pattern`, `name`, `kind`, `address`, `ordinal`, `parent_name`, `full_name`) |
-| `grep(pattern, limit, offset)` | Unified entity search function that returns JSON |
+| `hidden_ranges` | Collapsed/hidden ranges - start/end, description, header, footer |
+
+### Search
+
+| Table | Description |
+|-------|-------------|
+| `grep` | Unified entity search table (pattern, name, kind, address, ordinal, parent_name, full_name) |
+
+### Database Info
+
+| Table | Description |
+|-------|-------------|
+| `welcome` | Database summary/overview - processor, bitness, address range, counts |
+| `db_info` | Database metadata key-value pairs |
+| `ida_info` | IDA analysis info key-value pairs |
+| `problems` | IDA analysis problems/warnings |
+| `signatures` | FLIRT signature status |
+| `fixups` | Fixup/relocation entries |
+| `mappings` | Address space mappings |
+
+### Storage
+
+| Table | Description |
+|-------|-------------|
+| `netnode_kv` | Persistent key-value storage (netnode) |
+
+### Analysis
+
+| Table | Description |
+|-------|-------------|
+| `disasm_calls` | Call graph - caller/callee pairs per function |
+| `disasm_loops` | Loop detection - header blocks and back edges |
+
+### SQL Functions
+
+| Function | Description |
+|----------|-------------|
+| `grep(pattern, limit, offset)` | Unified entity search function (returns JSON) |
+| `decompile(addr)` | Decompile function at address (returns pseudocode) |
+| `disasm_at(addr)` | Canonical disassembly listing at address |
 | `get_ui_context_json()` | Plugin-only UI context JSON (GUI runtime only) |
-
-### Local Variable Mutation
-
-Hex-Rays-backed local variable surfaces:
-- `decompile(addr)` and `decompile(addr, 1)` for pseudocode display/refresh
-- `list_lvars(addr)` for local variable inventory
-- `rename_lvar(func_addr, lvar_idx, new_name)` for deterministic rename-by-index
-- `rename_lvar_by_name(func_addr, old_name, new_name)` for rename-by-name convenience
-- `UPDATE ctree_lvars SET name/type ... WHERE func_addr = ... AND idx = ...` as SQL update path
-
-Use `idx`-based writes when possible. Some internal/decompiler temps can be hidden or non-nameable.
-
-```sql
-SELECT list_lvars(0x401000);
-SELECT rename_lvar(0x401000, 2, 'buffer_size');
-SELECT decompile(0x401000, 1);
-```
-
-### EA Disassembly (Canonical)
-
-For "look at this address" workflows (code or data), use `disasm_at`:
-
-```sql
--- Canonical listing at EA (resolves containing head)
-SELECT disasm_at(0x1807272A8);
-
--- Context window (+/- 2 heads)
-SELECT disasm_at(0x1807272A8, 2);
-```
-
-`disasm(addr)` is still available for instruction-oriented workflows, but it force-decodes from the EA and is less suitable for data addresses.
 
 ### Unified Entity Search
 
@@ -204,7 +326,7 @@ FROM grep
 WHERE pattern = 'Create%'
 LIMIT 20;
 
--- Search anywhere in name (plain text is contains search)
+-- Search anywhere in name (plain text performs a contains search)
 SELECT name, kind, full_name
 FROM grep
 WHERE pattern = 'File'
@@ -221,244 +343,9 @@ WHERE pattern = 'dw%'
 SELECT grep('Create%', 20, 0);
 ```
 
-## Query Examples
+## Integration
 
-### Function Analysis
-
-```sql
--- Functions with most incoming calls
-SELECT f.name, COUNT(*) as callers
-FROM funcs f
-JOIN xrefs x ON f.address = x.to_ea
-WHERE x.is_code = 1
-GROUP BY f.address
-ORDER BY callers DESC LIMIT 10;
-
--- Leaf functions (make no calls)
-SELECT name, size FROM funcs f
-WHERE NOT EXISTS (
-  SELECT 1 FROM instructions i
-  WHERE i.func_addr = f.address AND i.mnemonic = 'call'
-)
-ORDER BY size DESC LIMIT 10;
-
--- Orphan functions (no callers)
-SELECT name, printf('0x%X', address) as addr FROM funcs f
-WHERE NOT EXISTS (
-  SELECT 1 FROM xrefs x WHERE x.to_ea = f.address AND x.is_code = 1
-);
-
--- Function size distribution
-SELECT
-  CASE
-    WHEN size < 64 THEN 'small (<64)'
-    WHEN size < 256 THEN 'medium (64-256)'
-    WHEN size < 1024 THEN 'large (256-1K)'
-    ELSE 'huge (>1K)'
-  END as category,
-  COUNT(*) as count
-FROM funcs GROUP BY category;
-```
-
-### String Analysis
-
-```sql
--- Strings with most references
-SELECT s.content, COUNT(x.from_ea) as refs
-FROM strings s
-JOIN xrefs x ON s.address = x.to_ea
-GROUP BY s.address
-ORDER BY refs DESC LIMIT 10;
-
--- Functions using most strings
-SELECT func_at(x.from_ea) as func, COUNT(DISTINCT s.address) as str_count
-FROM strings s
-JOIN xrefs x ON s.address = x.to_ea
-GROUP BY func_at(x.from_ea)
-ORDER BY str_count DESC LIMIT 10;
-
--- URL and path strings
-SELECT printf('0x%X', address) as addr, content FROM strings
-WHERE content LIKE 'http%'
-   OR content LIKE '%.exe%'
-   OR content LIKE '%.dll%'
-   OR content LIKE 'C:\\%';
-```
-
-### Instruction Patterns
-
-```sql
--- Most common call targets
-SELECT operand0 as target, COUNT(*) as count
-FROM instructions
-WHERE mnemonic = 'call'
-GROUP BY operand0
-ORDER BY count DESC LIMIT 15;
-
--- Jump instruction distribution
-SELECT mnemonic, COUNT(*) as count
-FROM instructions
-WHERE mnemonic LIKE 'j%'
-GROUP BY mnemonic
-ORDER BY count DESC;
-
--- Functions with unusual push/pop ratio (potential obfuscation)
-SELECT func_at(func_addr) as name,
-  SUM(CASE WHEN mnemonic = 'push' THEN 1 ELSE 0 END) as pushes,
-  SUM(CASE WHEN mnemonic = 'pop' THEN 1 ELSE 0 END) as pops
-FROM instructions
-GROUP BY func_addr
-HAVING pushes > 20 AND ABS(pushes - pops) > 5;
-```
-
-### Breakpoint Management
-
-The `breakpoints` table supports full CRUD: SELECT, INSERT, UPDATE, DELETE. Breakpoints persist in the IDB even without an active debugger session.
-
-```sql
--- List all breakpoints
-SELECT printf('0x%08X', address) as addr, type_name, enabled, condition
-FROM breakpoints;
-
--- Add a software breakpoint
-INSERT INTO breakpoints (address) VALUES (0x401000);
-
--- Add a hardware write watchpoint (type=1, size=4)
-INSERT INTO breakpoints (address, type, size) VALUES (0x402000, 1, 4);
-
--- Add a conditional breakpoint
-INSERT INTO breakpoints (address, condition) VALUES (0x401000, 'eax == 0');
-
--- Disable a breakpoint
-UPDATE breakpoints SET enabled = 0 WHERE address = 0x401000;
-
--- Update condition
-UPDATE breakpoints SET condition = 'ecx > 5' WHERE address = 0x401000;
-
--- Delete a breakpoint
-DELETE FROM breakpoints WHERE address = 0x401000;
-
--- Join with functions to see which functions have breakpoints
-SELECT b.address, f.name, b.type_name, b.enabled
-FROM breakpoints b
-JOIN funcs f ON b.address >= f.address AND b.address < f.end_ea;
-```
-
-**Breakpoint types:** `0` = software, `1` = hardware write, `2` = hardware read, `3` = hardware rdwr, `4` = hardware exec
-
-**Writable columns:** `enabled`, `type`, `size`, `flags`, `pass_count`, `condition`, `group`
-
-### Database Modification
-
-Several tables support INSERT, UPDATE, and DELETE operations:
-
-| Table | INSERT | UPDATE | DELETE |
-|-------|--------|--------|--------|
-| `breakpoints` | Yes | Yes | Yes |
-| `funcs` | Yes | `name`, `flags` | Yes |
-| `names` | Yes | `name` | Yes |
-| `comments` | Yes | `comment`, `rpt_comment` | Yes |
-| `bookmarks` | Yes | `description` | Yes |
-| `segments` | — | `name`, `class`, `perm` | Yes |
-| `instructions` | — | — | Yes |
-| `types` | Yes | Yes | Yes |
-| `types_members` | Yes | Yes | Yes |
-| `types_enum_values` | Yes | Yes | Yes |
-
-```sql
--- Create a function at an address (IDA auto-detects boundaries)
-INSERT INTO funcs (address) VALUES (0x401000);
-
--- Create a function with explicit end address and name
-INSERT INTO funcs (address, name, end_ea) VALUES (0x401000, 'my_func', 0x401050);
-
--- Set a name at an address
-INSERT INTO names (address, name) VALUES (0x401000, 'main');
-
--- Add a comment
-INSERT INTO comments (address, comment) VALUES (0x401000, 'entry point');
-
--- Add both regular and repeatable comments
-INSERT INTO comments (address, comment, rpt_comment) VALUES (0x401000, 'regular', 'repeatable');
-
--- Add a bookmark (slot auto-assigned)
-INSERT INTO bookmarks (address, description) VALUES (0x401000, 'interesting function');
-
--- Add a bookmark at a specific slot
-INSERT INTO bookmarks (slot, address, description) VALUES (5, 0x401000, 'slot 5 bookmark');
-
--- Rename a segment
-UPDATE segments SET name = '.mytext' WHERE start_ea = 0x401000;
-
--- Change segment permissions (R=4, W=2, X=1)
-UPDATE segments SET perm = 5 WHERE name = '.text';
-
--- Delete a segment
-DELETE FROM segments WHERE name = '.rdata';
-
--- Delete an instruction (convert to unexplored bytes)
-DELETE FROM instructions WHERE address = 0x401000;
-
--- Create a new struct type
-INSERT INTO types (name, kind) VALUES ('my_struct', 'struct');
-
--- Create an enum type
-INSERT INTO types (name, kind) VALUES ('my_flags', 'enum');
-
--- Add a member to a struct
-INSERT INTO types_members (type_ordinal, member_name, member_type) VALUES (42, 'field1', 'int');
-
--- Add an enum value
-INSERT INTO types_enum_values (type_ordinal, value_name, value) VALUES (15, 'FLAG_ACTIVE', 1);
-```
-
-## Skill-Assisted Workflows
-
-Use IDASQL as the data plane and drive analysis from your preferred coding CLI with the `/idasql` skill.
-
-Example prompts:
-
-```
-/idasql analyze this binary; tell me the high-risk entry points and why.
-/idasql find all callers of VirtualAlloc and summarize allocation patterns.
-/idasql list functions touching registry APIs, then map related strings.
-```
-
-The assistant can run focused SQL queries through IDASQL and then summarize findings in plain language.
-
-## Building
-
-### Prerequisites
-
-- CMake 3.20+
-- C++17 compiler
-- IDA SDK 9.0+ (set `IDASDK` environment variable)
-
-### CLI
-
-```bash
-cmake -S src/cli -B build/cli
-cmake --build build/cli --config Release
-```
-
-### Plugin
-
-```bash
-cmake -S src/plugin -B build/plugin -DIDASQL_WITH_MCP=OFF
-cmake --build build/plugin --config Release
-```
-
-Output: `$IDASDK/bin/plugins/idasql_plugin.dll`
-
-### Tests
-
-```bash
-cmake -S tests -B build/tests
-cmake --build build/tests --config Release
-ctest --test-dir build/tests -C Release
-```
-
-## HTTP REST API
+### HTTP REST API
 
 Stateless HTTP server for simple integration. No protocol overhead.
 
@@ -480,7 +367,7 @@ idasql -s kernel.i64 --http 8082
 
 Endpoints: `/status`, `/help`, `/query`, `/shutdown`
 
-### HTTP Server from REPL
+#### HTTP Server from REPL
 
 Start an HTTP server interactively from the REPL or IDA plugin CLI:
 
@@ -503,9 +390,9 @@ HTTP server stopped
 
 The server uses a random port (8100-8199) to avoid conflicts with `--http`.
 
-## MCP Server
+### MCP Server
 
-For MCP-compatible clients (Claude Desktop, etc.):
+For MCP-compatible clients (Model Context Protocol, a standard for AI tool integration):
 
 `--mcp` and `.mcp` are available only when built with `-DIDASQL_WITH_MCP=ON` (default is `OFF`).
 
@@ -531,90 +418,11 @@ Configure your MCP client:
 
 Tools: `idasql_query` (direct SQL)
 
-## Integration with Your Favorite CLI
-
-Use IDASQL with any coding CLI that supports a `/idasql` skill.
-
-### Setup
-
-1. Open your target in IDA Pro, or point CLI mode at an `.i64` file.
-2. Start HTTP mode (`idasql -s <db> --http 8081`) or MCP mode (`idasql -s <db> --mcp`) if compiled with MCP.
-3. In your coding CLI, run `/idasql` prompts against that backend.
-
-### Example Prompts
-
-```
-/idasql analyze this binary; tell me the top 10 largest functions and likely responsibilities.
-/idasql find all callers of CreateFileW and summarize error handling behavior.
-/idasql identify suspicious hardcoded URLs and the functions that reference them.
-/idasql map imports related to crypto and show nearest string evidence.
-```
-
-The `/idasql` skill can execute SQL, iterate, and summarize results without requiring IDAPython scripting.
-
-## Claude Code Plugin
-
-IDASQL is available as a Claude Code plugin with 13 topic-focused skills for reverse engineering workflows.
-
-### Prerequisites
-
-1. **IDA Pro** installed with `ida.exe` directory in your PATH
-2. **idasql.exe** downloaded from [Releases](https://github.com/allthingsida/idasql/releases) and placed next to `ida.exe`
-3. Verify setup: `idasql --version` should work from command line
-
-### Installation
-
-```bash
-claude /install-plugin https://github.com/allthingsida/idasql-skills
-```
-
-### Skills
-
-| Skill | Description |
-|-------|-------------|
-| `connect` | Connection, CLI, HTTP, UI context, routing index |
-| `disassembly` | Functions, segments, instructions, blocks |
-| `data` | Strings, bytes, string cross-references |
-| `xrefs` | Cross-references, imports, entity search |
-| `decompiler` | Full decompiler reference (ctree, lvars, union selection) |
-| `annotations` | Edit and annotate decompilation and disassembly |
-| `types` | Type system mechanics (structs, unions, enums, parse_decls) |
-| `debugger` | Breakpoints and byte patching |
-| `storage` | Persistent key-value storage (netnode) |
-| `idapython` | Python execution via SQL |
-| `functions` | SQL functions reference |
-| `analysis` | Analysis workflows, security audits, advanced SQL |
-| `resource` | Recursive source recovery methodology |
-
-### Usage
-
-Once installed, skills are automatically available:
-
-```
-/idasql analyze this binary; tell me what it does first.
-/idasql count functions in myfile.i64 and list the largest 20.
-/idasql find strings containing 'password' and map referencing functions.
-```
-
-### Troubleshooting
-
-**SSH Permission Denied**
-
-If you see `git@github.com: Permission denied (publickey)` during install, configure git to use HTTPS:
-
-```bash
-git config --global url."https://github.com/".insteadOf "git@github.com:"
-```
-
 ## Built With
 
-- **[libxsql](https://github.com/0xeb/libxsql)** - Header-only C++17 library for exposing C++ data structures as SQLite virtual tables. Provides the fluent builder API for defining tables, constraint pushdown, and HTTP thinclient support.
+- **[libxsql](https://github.com/0xeb/libxsql)** - Header-only C++17 library for exposing C++ data structures as SQLite virtual tables. Provides the fluent builder API for defining tables, constraint pushdown, and HTTP thin-client support.
 
 - **[fastmcpp](https://github.com/0xeb/fastmcpp)** - Optional MCP server implementation used when building with `-DIDASQL_WITH_MCP=ON`.
-
-## Author
-
-**Elias Bachaalany** ([@0xeb](https://github.com/0xeb))
 
 ## License
 
