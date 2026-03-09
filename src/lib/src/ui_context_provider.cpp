@@ -236,13 +236,27 @@ static bool is_address_widget_type(twidget_type_t widget_type) {
            widget_type == BWN_PSEUDOCODE;
 }
 
+static bool is_type_tree_widget_type(twidget_type_t widget_type) {
+#ifdef BWN_TITREE
+    if (widget_type == BWN_TITREE) {
+        return true;
+    }
+#endif
+#ifdef BWN_TIL_VIEW
+    if (widget_type == BWN_TIL_VIEW) {
+        return true;
+    }
+#endif
+    return false;
+}
+
 static bool is_chooser_like_widget_type(twidget_type_t widget_type) {
     return is_chooser_widget(widget_type) ||
            widget_type == BWN_FUNCS ||
            widget_type == BWN_NAMES ||
            widget_type == BWN_IMPORTS ||
            widget_type == BWN_BPTS ||
-           widget_type == BWN_TITREE;
+           is_type_tree_widget_type(widget_type);
 }
 
 static const char* widget_type_name(twidget_type_t widget_type) {
@@ -257,9 +271,18 @@ static const char* widget_type_name(twidget_type_t widget_type) {
         case BWN_NAMES: return "BWN_NAMES";
         case BWN_IMPORTS: return "BWN_IMPORTS";
         case BWN_BPTS: return "BWN_BPTS";
-        case BWN_TITREE: return "BWN_TITREE";
         default: break;
     }
+#ifdef BWN_TITREE
+    if (widget_type == BWN_TITREE) {
+        return "BWN_TITREE";
+    }
+#endif
+#ifdef BWN_TIL_VIEW
+    if (widget_type == BWN_TIL_VIEW) {
+        return "BWN_TIL_VIEW";
+    }
+#endif
     return nullptr;
 }
 
