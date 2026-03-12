@@ -730,8 +730,7 @@ INSERT INTO types_enum_values (type_ordinal, value_name, value) VALUES (15, 'FLA
 INSERT INTO types_enum_values (type_ordinal, value_name, value, comment)
 VALUES (15, 'FLAG_HIDDEN', 2, 'not visible in UI');
 -- Rename a local variable
-UPDATE ctree_lvars SET name = 'buffer_size'
-WHERE func_addr = 0x401000 AND idx = 2;
+SELECT rename_lvar(0x401000, 2, 'buffer_size');
 
 -- Change variable type
 UPDATE ctree_lvars SET type = 'char *'
@@ -1544,6 +1543,11 @@ SELECT decode_insn(0x401000);
 | `set_numform_ea_expr(func_addr, ea, opnum, spec[, op_name[, nth]])` | Set/clear numform via generic expression coordinate |
 | `get_numform_ea_expr(func_addr, ea, opnum[, op_name[, nth]])` | Read numform JSON via generic expression coordinate |
 
+Targeting guidance:
+- Use `*_ea_arg` helpers for repeated callees and call-site arguments.
+- Use `ctree_item_at(..., op_name, nth)` plus `*_ea_expr` helpers for non-call expressions and assignment-side struct/union population stores.
+- Verify success by recovered member paths and fewer bad casts/temp locals; constants may still render as named objects instead of quoted literals.
+
 #### Runtime Capability Profile (Do This First)
 
 Do **not** start with broad `pragma_*` discovery unless debugging the tool itself.
@@ -1573,15 +1577,13 @@ If any call returns `no such function`, treat that primitive as unavailable in t
 
 #### Mandatory Mutation Loop
 
-For every write, use this strict loop:
+For every write, use this loop:
 
 1. Read current state (`ctree_lvars`, `pseudocode`, etc.) for the exact target.
-2. Apply **one** focused mutation.
+2. Apply structural typing first: `parse_decls`, prototypes, `ctree_lvars.type`, global types.
 3. Force refresh with `SELECT decompile(func_addr, 1)`.
-4. Verify both:
-   - Structured row state (e.g., `ctree_lvars` row changed),
-   - Rendered pseudocode reflects the change.
-5. Continue to next mutation only after verification succeeds.
+4. Apply rename/label/union-selection/numform/comment cleanup against the refreshed rows.
+5. Refresh and verify both structured row state and rendered pseudocode.
 
 #### Local Type Seeding (Works Even In Minimal Runtimes)
 
@@ -1608,7 +1610,8 @@ Use this to reduce noisy casts and surface meaningful field access when paired w
 If `set_union_selection*` / `set_numform*` / `ctree_item_at` are unavailable:
 
 - Use `UPDATE funcs SET prototype = ...` for function-level typing.
-- Use `UPDATE ctree_lvars SET type/name/comment = ...` for local shaping.
+- Use `UPDATE ctree_lvars SET type/comment = ...` for local shaping.
+- Prefer `rename_lvar*` for local names, even in fallback flows.
 - Use `UPDATE pseudocode SET comment = ...` for stable semantic breadcrumbs.
 - Keep constants readable via comments when enum rendering primitives are unavailable.
 - Explicitly note unavailable primitives in your response so follow-up runs don't waste queries.
@@ -1629,10 +1632,21 @@ SELECT rename_lvar(0x401000, 2, 'buffer_size');
 -- Rename by current name (convenience; fails if ambiguous)
 SELECT rename_lvar_by_name(0x401000, 'v2', 'buffer_size');
 
+-- If you discovered the target via stack slot or another query, resolve idx first
+SELECT rename_lvar(
+  0x401000,
+  (SELECT idx
+   FROM ctree_lvars
+   WHERE func_addr = 0x401000 AND stkoff = 32
+   ORDER BY idx
+   LIMIT 1),
+  'ctx');
+
 -- Set local-variable comment by index
 SELECT set_lvar_comment(0x401000, 2, 'points to decrypted buffer');
 
--- Equivalent UPDATE path
+-- Simple current-row UPDATE path for rename
+-- Prefer rename_lvar* for split/array locals or scripted cleanup
 UPDATE ctree_lvars SET name = 'buffer_size'
 WHERE func_addr = 0x401000 AND idx = 2;
 
@@ -1691,6 +1705,12 @@ SELECT set_union_selection_item(0x140001BD0, 42, '');
 
 -- Optional bridge when you want hybrid lookup + explicit item workflow:
 SELECT call_arg_item(0x140001BD0, 0x140001C3E, 0);
+
+-- Assignment-side stores often need generic expression targeting.
+-- This is the right fix when a wrong union arm creates casts or temp locals.
+SELECT ctree_item_at(0x140001BD0, 0x140001C49, 'cot_asg', 0);
+SELECT set_union_selection_ea_expr(0x140001BD0, 0x140001C49, '[0]', 'cot_asg', 0);
+SELECT set_numform_ea_expr(0x140001BD0, 0x140001C49, 0, 'clear', 'cot_asg', 0);
 
 -- Enum constant rendering in comparisons (e.g., fdwReason == 1 → DLL_PROCESS_ATTACH):
 -- PREFERRED: retype the variable to an enum type — the decompiler infers constants automatically

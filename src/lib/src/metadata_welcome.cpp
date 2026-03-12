@@ -10,16 +10,13 @@
 #include "metadata_welcome.hpp"
 
 #include "ida_headers.hpp"
+#include <idasql/string_utils.hpp>
 
 namespace idasql {
 namespace metadata {
 namespace {
 
-static std::string format_hex_u64(uint64_t value) {
-    char buf[32];
-    qsnprintf(buf, sizeof(buf), "0x%llX", (unsigned long long)value);
-    return std::string(buf);
-}
+using idasql::format_ea_hex;
 
 static std::string get_primary_entry_name() {
     if (get_entry_qty() <= 0) {
@@ -37,9 +34,9 @@ static void collect_welcome(std::vector<WelcomeRow>& rows) {
     WelcomeRow row;
     row.processor = inf_get_procname().c_str();
     row.is_64bit = inf_is_64bit() ? 1 : 0;
-    row.min_ea = format_hex_u64(static_cast<uint64_t>(inf_get_min_ea()));
-    row.max_ea = format_hex_u64(static_cast<uint64_t>(inf_get_max_ea()));
-    row.start_ea = format_hex_u64(static_cast<uint64_t>(inf_get_start_ea()));
+    row.min_ea = format_ea_hex(static_cast<uint64_t>(inf_get_min_ea()));
+    row.max_ea = format_ea_hex(static_cast<uint64_t>(inf_get_max_ea()));
+    row.start_ea = format_ea_hex(static_cast<uint64_t>(inf_get_start_ea()));
 
     row.entry_name = get_primary_entry_name();
     if (row.entry_name.empty()) {

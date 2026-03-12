@@ -10,6 +10,7 @@
 
 #include <idasql/platform.hpp>
 
+#include <idasql/string_utils.hpp>
 #include <idasql/vtable.hpp>
 #include <xsql/database.hpp>
 
@@ -29,6 +30,18 @@ namespace entities {
 // ============================================================================
 // Struct declarations
 // ============================================================================
+
+struct FuncRow {
+    ea_t start_ea = BADADDR;
+
+    // Lazy-computed type details
+    mutable func_type_data_t fi;
+    mutable bool fi_valid = false;
+    mutable bool fi_computed = false;
+
+    // Defined after get_func_type_details declaration below
+    inline bool ensure_fi() const;
+};
 
 struct CommentRow {
     ea_t ea = BADADDR;
@@ -114,7 +127,16 @@ std::string safe_name(ea_t ea);
 std::string safe_entry_name(size_t idx);
 
 bool get_func_tinfo(ea_t ea, tinfo_t& tif);
+bool get_func_type_details(ea_t ea, func_type_data_t& fi);
 const char* get_cc_name(callcnv_t cc);
+
+inline bool FuncRow::ensure_fi() const {
+    if (!fi_computed) {
+        fi_computed = true;
+        fi_valid = get_func_type_details(start_ea, fi);
+    }
+    return fi_valid;
+}
 
 void collect_comment_rows(std::vector<CommentRow>& rows);
 
@@ -165,8 +187,8 @@ inline constexpr int kInstructionReprDeltaBaseCol = kInstructionReprSerialBaseCo
 inline constexpr int kInstructionFormatSpecBaseCol = kInstructionReprDeltaBaseCol + kInstructionOperandCount;
 inline constexpr int kInstructionColumnCount = kInstructionFormatSpecBaseCol + kInstructionOperandCount;
 
-// Parsing helpers
-std::string trim_copy(const std::string& in);
+// Parsing helpers (trim_copy is in <idasql/string_utils.hpp>)
+using idasql::trim_copy;
 bool starts_with_ci(const std::string& text, const char* prefix);
 bool equals_ci(const std::string& text, const char* token);
 bool parse_int64(const std::string& text, int64_t& out_value);
@@ -187,7 +209,7 @@ int idaapi patched_bytes_visitor(ea_t ea, qoff64_t fpos, uint64 o, uint64 v, voi
 // Table definition declarations
 // ============================================================================
 
-VTableDef define_funcs();
+CachedTableDef<FuncRow> define_funcs();
 VTableDef define_segments();
 VTableDef define_names();
 VTableDef define_entries();
@@ -314,8 +336,8 @@ public:
 // ============================================================================
 
 struct TableRegistry {
-    // Index-based tables (use IDA's indexed access, no cache needed)
-    VTableDef funcs;
+    // Cached tables with write support
+    CachedTableDef<FuncRow> funcs;
     VTableDef segments;
     VTableDef names;
     VTableDef entries;

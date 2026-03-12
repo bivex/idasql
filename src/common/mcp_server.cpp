@@ -103,7 +103,7 @@ MCPQueueResult IDAMCPServer::queue_and_wait(MCPPendingCommand::Type type, const 
     }
 
     // Convention: query callbacks return "Error: ..." on failure
-    bool ok = cmd->result.substr(0, 7) != "Error: ";
+    bool ok = !cmd->result.starts_with("Error: ");
     return {ok, cmd->result};
 }
 
@@ -173,7 +173,7 @@ int IDAMCPServer::start(int port, QueryCallback query_cb,
                 }
                 result = query_cb_(query);
                 // Convention: query callbacks return "Error: ..." on failure
-                if (result.substr(0, 7) == "Error: ") {
+                if (result.starts_with("Error: ")) {
                     success = false;
                 }
             }

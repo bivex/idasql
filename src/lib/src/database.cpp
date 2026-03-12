@@ -127,17 +127,7 @@ std::string QueryEngine::scalar(const char* sql) {
     return "";
 }
 
-std::string QueryEngine::trim_copy(const std::string& s) {
-    size_t begin = 0;
-    while (begin < s.size() && std::isspace(static_cast<unsigned char>(s[begin]))) {
-        ++begin;
-    }
-    size_t end = s.size();
-    while (end > begin && std::isspace(static_cast<unsigned char>(s[end - 1]))) {
-        --end;
-    }
-    return s.substr(begin, end - begin);
-}
+// trim_copy is now in <idasql/string_utils.hpp>
 
 std::string QueryEngine::to_lower_copy(std::string value) {
     for (char& c : value) {

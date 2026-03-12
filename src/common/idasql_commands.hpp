@@ -150,9 +150,12 @@ inline CommandResult handle_command(
 
             if (callbacks.mcp_start) {
                 output = callbacks.mcp_start(port, bind_addr);
+                // Only copy to clipboard on fresh start (multi-line output with URL)
                 auto nl = output.find('\n');
-                const std::string clipboard_text = (nl != std::string::npos) ? output.substr(0, nl) : output;
-                (void)xsql::thinclient::try_copy_text_to_clipboard_windows(clipboard_text);
+                if (nl != std::string::npos) {
+                    const std::string clipboard_text = output.substr(0, nl);
+                    (void)xsql::thinclient::try_copy_text_to_clipboard_windows(clipboard_text);
+                }
             } else {
                 output = "MCP server not available";
             }
@@ -204,9 +207,12 @@ inline CommandResult handle_command(
 
             if (callbacks.http_start) {
                 output = callbacks.http_start(port, bind_addr);
+                // Only copy to clipboard on fresh start (multi-line output with URL)
                 auto nl = output.find('\n');
-                const std::string clipboard_text = (nl != std::string::npos) ? output.substr(0, nl) : output;
-                (void)xsql::thinclient::try_copy_text_to_clipboard_windows(clipboard_text);
+                if (nl != std::string::npos) {
+                    const std::string clipboard_text = output.substr(0, nl);
+                    (void)xsql::thinclient::try_copy_text_to_clipboard_windows(clipboard_text);
+                }
             } else {
                 output = "HTTP server not available";
             }

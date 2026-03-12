@@ -4,6 +4,7 @@
 #include "functions.hpp"
 
 #include <idasql/platform.hpp>
+#include <idasql/string_utils.hpp>
 
 #include <xsql/database.hpp>
 #include <xsql/json.hpp>
@@ -1789,17 +1790,8 @@ static void sql_set_lvar_comment(xsql::FunctionContext& ctx, int argc, xsql::Fun
     ctx.result_int(ok ? 1 : 0);
 }
 
-static std::string trim_copy(const std::string& text) {
-    size_t begin = 0;
-    size_t end = text.size();
-    while (begin < end && std::isspace(static_cast<unsigned char>(text[begin])) != 0) {
-        ++begin;
-    }
-    while (end > begin && std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
-        --end;
-    }
-    return text.substr(begin, end - begin);
-}
+// trim_copy is now in <idasql/string_utils.hpp>
+using idasql::trim_copy;
 
 static bool parse_numeric_ea_text(const std::string& text, ea_t& out_ea) {
     const std::string token = trim_copy(text);

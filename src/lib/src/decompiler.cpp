@@ -3,8 +3,65 @@
 
 #include "decompiler.hpp"
 
+#include <idasql/string_utils.hpp>
+
+#include <sstream>
+#include <unordered_map>
+
 namespace idasql {
 namespace decompiler {
+
+namespace {
+
+using idasql::format_ea_hex;
+
+std::string preview_pseudocode_line(const std::string& line, size_t max_len = 80) {
+    if (line.size() <= max_len) {
+        return line;
+    }
+    return line.substr(0, max_len - 3) + "...";
+}
+
+std::string describe_comment_target(ea_t func_addr, ea_t target_ea, item_preciser_t itp) {
+    std::ostringstream oss;
+    oss << "func_addr=" << format_ea_hex(func_addr)
+        << ", ea=" << format_ea_hex(target_ea)
+        << ", comment_placement='" << itp_to_name(itp) << "'";
+    return oss.str();
+}
+
+std::string describe_hexrays_failure(const hexrays_failure_t& hf) {
+    qstring desc = hf.desc();
+    if (desc.empty()) {
+        return "Hex-Rays decompilation failed";
+    }
+    return std::string(desc.c_str());
+}
+
+bool verify_comment_state(cfunc_t* cfunc, const treeloc_t& loc, const char* expected_comment) {
+    const char* actual = cfunc->get_user_cmt(loc, RETRIEVE_ALWAYS);
+    const std::string actual_text = actual ? actual : "";
+    const bool expect_clear = (expected_comment == nullptr || expected_comment[0] == '\0');
+    if (expect_clear) {
+        return actual_text.empty();
+    }
+    return actual != nullptr && actual_text == expected_comment;
+}
+
+void append_row_context_error(const PseudocodeLine& row) {
+    const std::string base = xsql::get_vtab_error();
+    if (base.empty()) {
+        return;
+    }
+
+    std::ostringstream oss;
+    oss << base
+        << " (selected row line_num=" << row.line_num
+        << ", line='" << preview_pseudocode_line(row.text) << "')";
+    xsql::set_vtab_error(oss.str());
+}
+
+}  // namespace
 
 // ============================================================================
 // Decompiler Initialization
@@ -144,18 +201,26 @@ bool collect_pseudocode(std::vector<PseudocodeLine>& lines, ea_t func_addr) {
         lines.push_back(pl);
     }
 
-    // Read stored comments and match to lines by ea
+    // Read stored comments and match to lines by ea (O(n+m) via index)
     user_cmts_t* cmts = restore_user_cmts(func_addr);
     if (cmts) {
+        // Build ea -> line indices for O(1) lookup
+        std::unordered_map<ea_t, std::vector<size_t>> ea_to_lines;
+        for (size_t idx = 0; idx < lines.size(); ++idx) {
+            ea_to_lines[lines[idx].ea].push_back(idx);
+        }
+
         for (auto it = user_cmts_begin(cmts); it != user_cmts_end(cmts); it = user_cmts_next(it)) {
             const treeloc_t& loc = user_cmts_first(it);
             const citem_cmt_t& cmt = user_cmts_second(it);
-            // Match comment to first line with this ea
-            for (auto& pl : lines) {
-                if (pl.ea == loc.ea && pl.comment.empty()) {
-                    pl.comment = cmt.c_str();
-                    pl.comment_placement = loc.itp;
-                    break;
+            auto found = ea_to_lines.find(loc.ea);
+            if (found != ea_to_lines.end()) {
+                for (size_t idx : found->second) {
+                    if (lines[idx].comment.empty()) {
+                        lines[idx].comment = cmt.c_str();
+                        lines[idx].comment_placement = loc.itp;
+                        break;
+                    }
                 }
             }
         }
@@ -260,7 +325,7 @@ int idaapi ctree_collector_t::visit_insn(cinsn_t* insn) {
     ci.op_name = get_full_ctype_name(insn->op);
     ci.ea = insn->ea;
     ci.label_num = insn->label_num;
-    ci.depth = parents.size();
+    ci.depth = static_cast<int>(parents.size());
     if (insn->op == cit_goto && insn->cgoto != nullptr) {
         ci.goto_label_num = insn->cgoto->label_num;
     }
@@ -287,7 +352,7 @@ int idaapi ctree_collector_t::visit_expr(cexpr_t* expr) {
     ci.op_name = get_full_ctype_name(expr->op);
     ci.ea = expr->ea;
     ci.label_num = expr->label_num;
-    ci.depth = parents.size();
+    ci.depth = static_cast<int>(parents.size());
 
     citem_t* p = parent_item();
     if (p) {
@@ -612,7 +677,7 @@ int idaapi call_args_collector_t::visit_expr(cexpr_t* expr) {
             ai.call_ea = expr->ea;
             ai.call_obj_name = call_obj_name;
             ai.call_helper_name = call_helper_name;
-            ai.arg_idx = i;
+            ai.arg_idx = static_cast<int>(i);
             ai.arg_op = get_full_ctype_name(arg.op);
 
             auto it = item_ids.find((citem_t*)&arg);
@@ -1084,15 +1149,33 @@ int64_t CallArgsGenerator::rowid() const { return rowid_; }
 // ============================================================================
 
 bool set_decompiler_comment(ea_t func_addr, ea_t target_ea, const char* comment, item_preciser_t itp) {
-    if (!hexrays_available()) return false;
-    if (target_ea == BADADDR || target_ea == 0) return false;
+    if (!hexrays_available()) {
+        xsql::set_vtab_error("cannot write pseudocode comment: Hex-Rays decompiler is unavailable");
+        return false;
+    }
+    if (target_ea == BADADDR || target_ea == 0) {
+        xsql::set_vtab_error(
+            "cannot write pseudocode comment: invalid pseudocode anchor (" +
+            describe_comment_target(func_addr, target_ea, itp) + ")");
+        return false;
+    }
 
     func_t* f = get_func(func_addr);
-    if (!f) return false;
+    if (!f) {
+        xsql::set_vtab_error(
+            "cannot write pseudocode comment: function not found for " +
+            describe_comment_target(func_addr, target_ea, itp));
+        return false;
+    }
 
     hexrays_failure_t hf;
     cfuncptr_t cfunc = decompile(f, &hf);
-    if (!cfunc) return false;
+    if (!cfunc) {
+        xsql::set_vtab_error(
+            "cannot write pseudocode comment: " + describe_hexrays_failure(hf) +
+            " (" + describe_comment_target(func_addr, target_ea, itp) + ")");
+        return false;
+    }
 
     treeloc_t loc;
     loc.ea = target_ea;
@@ -1102,20 +1185,46 @@ bool set_decompiler_comment(ea_t func_addr, ea_t target_ea, const char* comment,
     cfunc->set_user_cmt(loc, (comment && comment[0]) ? comment : nullptr);
 
     cfunc->save_user_cmts();
+    if (!verify_comment_state(&*cfunc, loc, comment)) {
+        xsql::set_vtab_error(
+            "pseudocode comment write did not persist; likely unsupported anchor or placement (" +
+            describe_comment_target(func_addr, target_ea, itp) + ")");
+        return false;
+    }
     invalidate_decompiler_cache(func_addr);
     return true;
 }
 
 bool clear_decompiler_comment_all_placements(ea_t func_addr, ea_t target_ea) {
-    if (!hexrays_available()) return false;
-    if (target_ea == BADADDR || target_ea == 0) return false;
+    if (!hexrays_available()) {
+        xsql::set_vtab_error("cannot clear pseudocode comment: Hex-Rays decompiler is unavailable");
+        return false;
+    }
+    if (target_ea == BADADDR || target_ea == 0) {
+        xsql::set_vtab_error(
+            "cannot clear pseudocode comment: invalid pseudocode anchor (func_addr=" +
+            format_ea_hex(func_addr) + ", ea=" + format_ea_hex(target_ea) +
+            ", comment_placement='*')");
+        return false;
+    }
 
     func_t* f = get_func(func_addr);
-    if (!f) return false;
+    if (!f) {
+        xsql::set_vtab_error(
+            "cannot clear pseudocode comment: function not found for func_addr=" +
+            format_ea_hex(func_addr) + ", ea=" + format_ea_hex(target_ea));
+        return false;
+    }
 
     hexrays_failure_t hf;
     cfuncptr_t cfunc = decompile(f, &hf);
-    if (!cfunc) return false;
+    if (!cfunc) {
+        xsql::set_vtab_error(
+            "cannot clear pseudocode comment: " + describe_hexrays_failure(hf) +
+            " (func_addr=" + format_ea_hex(func_addr) +
+            ", ea=" + format_ea_hex(target_ea) + ")");
+        return false;
+    }
 
     // Clear any existing comment regardless of placement so UPDATE statements
     // like "SET comment = NULL, comment_placement = 'semi'" are order-independent.
@@ -1131,6 +1240,17 @@ bool clear_decompiler_comment_all_placements(ea_t func_addr, ea_t target_ea) {
     }
 
     cfunc->save_user_cmts();
+    for (item_preciser_t itp : kPlacements) {
+        treeloc_t loc;
+        loc.ea = target_ea;
+        loc.itp = itp;
+        if (!verify_comment_state(&*cfunc, loc, nullptr)) {
+            xsql::set_vtab_error(
+                "pseudocode comment clear did not persist (" +
+                describe_comment_target(func_addr, target_ea, itp) + ")");
+            return false;
+        }
+    }
     invalidate_decompiler_cache(func_addr);
     return true;
 }
@@ -1607,6 +1727,13 @@ CachedTableDef<PseudocodeLine> define_pseudocode() {
                         row.comment.clear();
                         return true;
                     }
+                    std::ostringstream oss;
+                    oss << "cannot write pseudocode comment: selected row is not addressable "
+                        << "(func_addr=" << format_ea_hex(row.func_addr)
+                        << ", line_num=" << row.line_num
+                        << ", ea=" << format_ea_hex(row.ea)
+                        << ", line='" << preview_pseudocode_line(row.text) << "')";
+                    xsql::set_vtab_error(oss.str());
                     return false;
                 }
                 bool ok = false;
@@ -1614,6 +1741,9 @@ CachedTableDef<PseudocodeLine> define_pseudocode() {
                     ok = clear_decompiler_comment_all_placements(row.func_addr, row.ea);
                 } else {
                     ok = set_decompiler_comment(row.func_addr, row.ea, text, row.comment_placement);
+                }
+                if (!ok) {
+                    append_row_context_error(row);
                 }
                 if (ok) {
                     row.comment = text ? text : "";

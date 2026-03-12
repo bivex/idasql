@@ -72,156 +72,125 @@ const char* get_cc_name(callcnv_t cc) {
 }
 
 // ============================================================================
+// Helper: get function type details (rettype, calling conv, etc.)
+// ============================================================================
+
+bool get_func_type_details(ea_t ea, func_type_data_t& fi) {
+    tinfo_t tif;
+    if (!get_func_tinfo(ea, tif) || !tif.is_func()) return false;
+    return tif.get_func_details(&fi);
+}
+
+// ============================================================================
 // FUNCS Table (with UPDATE/DELETE support)
 // ============================================================================
 
-VTableDef define_funcs() {
-    return table("funcs")
-        .count([]() { return get_func_qty(); })
-        .column_int64("address", [](size_t i) -> int64_t {
-            func_t* f = getn_func(i);
-            return f ? static_cast<int64_t>(f->start_ea) : 0;
+CachedTableDef<FuncRow> define_funcs() {
+    return cached_table<FuncRow>("funcs")
+        .no_shared_cache()
+        .estimate_rows([]() -> size_t { return get_func_qty(); })
+        .cache_builder([](std::vector<FuncRow>& rows) {
+            rows.clear();
+            const size_t n = get_func_qty();
+            rows.reserve(n);
+            for (size_t i = 0; i < n; ++i) {
+                func_t* f = getn_func(i);
+                if (f) rows.push_back({f->start_ea});
+            }
+        })
+        .row_lookup([](FuncRow& row, int64_t rowid) -> bool {
+            func_t* f = getn_func(static_cast<size_t>(rowid));
+            if (!f) return false;
+            row.start_ea = f->start_ea;
+            return true;
+        })
+        .column_int64("address", [](const FuncRow& row) -> int64_t {
+            return static_cast<int64_t>(row.start_ea);
         })
         .column_text_rw("name",
-            // Getter
-            [](size_t i) -> std::string {
-                func_t* f = getn_func(i);
-                return f ? safe_func_name(f->start_ea) : "";
+            [](const FuncRow& row) -> std::string {
+                return safe_func_name(row.start_ea);
             },
-            // Setter - rename function
-            [](size_t i, const char* new_name) -> bool {
+            [](FuncRow& row, const char* new_name) -> bool {
                 auto_wait();
-                func_t* f = getn_func(i);
-                if (!f) return false;
-                bool ok = set_name(f->start_ea, new_name, SN_CHECK) != 0;
-                if (ok) decompiler::invalidate_decompiler_cache(f->start_ea);
+                bool ok = set_name(row.start_ea, new_name, SN_CHECK) != 0;
+                if (ok) decompiler::invalidate_decompiler_cache(row.start_ea);
                 auto_wait();
                 return ok;
             })
         .column_text_rw("prototype",
-            // Getter
-            [](size_t i) -> std::string {
-                func_t* f = getn_func(i);
-                if (!f) return "";
+            [](const FuncRow& row) -> std::string {
                 qstring out;
-                if (print_type(&out, f->start_ea, PRTYPE_1LINE | PRTYPE_SEMI)) {
+                if (print_type(&out, row.start_ea, PRTYPE_1LINE | PRTYPE_SEMI)) {
                     return out.c_str();
                 }
                 return "";
             },
-            // Setter - apply/clear function prototype declaration.
-            [](size_t i, const char* new_decl) -> bool {
+            [](FuncRow& row, const char* new_decl) -> bool {
                 auto_wait();
-                func_t* f = getn_func(i);
-                if (!f) return false;
-
                 bool ok = false;
                 if (new_decl == nullptr || new_decl[0] == '\0') {
-                    del_tinfo(f->start_ea);
+                    del_tinfo(row.start_ea);
                     ok = true;
                 } else {
-                    ok = apply_cdecl(nullptr, f->start_ea, new_decl, 0);
+                    ok = apply_cdecl(nullptr, row.start_ea, new_decl, 0);
                 }
-
-                if (ok) {
-                    decompiler::invalidate_decompiler_cache(f->start_ea);
-                }
+                if (ok) decompiler::invalidate_decompiler_cache(row.start_ea);
                 auto_wait();
                 return ok;
             })
-        .column_int64("size", [](size_t i) -> int64_t {
-            func_t* f = getn_func(i);
+        .column_int64("size", [](const FuncRow& row) -> int64_t {
+            func_t* f = get_func(row.start_ea);
             return f ? static_cast<int64_t>(f->size()) : 0;
         })
-        .column_int64("end_ea", [](size_t i) -> int64_t {
-            func_t* f = getn_func(i);
+        .column_int64("end_ea", [](const FuncRow& row) -> int64_t {
+            func_t* f = get_func(row.start_ea);
             return f ? static_cast<int64_t>(f->end_ea) : 0;
         })
         .column_int64_rw("flags",
-            [](size_t i) -> int64_t {
-                func_t* f = getn_func(i);
+            [](const FuncRow& row) -> int64_t {
+                func_t* f = get_func(row.start_ea);
                 return f ? static_cast<int64_t>(f->flags) : 0;
             },
-            [](size_t i, int64_t new_flags) -> bool {
-                func_t* f = getn_func(i);
+            [](FuncRow& row, int64_t new_flags) -> bool {
+                func_t* f = get_func(row.start_ea);
                 if (!f) return false;
                 f->flags = static_cast<ushort>(new_flags);
                 bool ok = update_func(f);
-                if (ok) decompiler::invalidate_decompiler_cache(f->start_ea);
+                if (ok) decompiler::invalidate_decompiler_cache(row.start_ea);
                 return ok;
             })
-        // Prototype columns - return type
-        .column_text("return_type", [](size_t i) -> std::string {
-            func_t* f = getn_func(i);
-            if (!f) return "";
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return "";
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return "";
+        // Prototype columns - return type (lazy-computed, cached per row)
+        .column_text("return_type", [](const FuncRow& row) -> std::string {
+            if (!row.ensure_fi()) return "";
             qstring ret_str;
-            fi.rettype.print(&ret_str);
+            row.fi.rettype.print(&ret_str);
             return ret_str.c_str();
         })
-        .column_int("return_is_ptr", [](size_t i) -> int {
-            func_t* f = getn_func(i);
-            if (!f) return 0;
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return 0;
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return 0;
-            return fi.rettype.is_ptr() ? 1 : 0;
+        .column_int("return_is_ptr", [](const FuncRow& row) -> int {
+            return row.ensure_fi() && row.fi.rettype.is_ptr() ? 1 : 0;
         })
-        .column_int("return_is_int", [](size_t i) -> int {
-            func_t* f = getn_func(i);
-            if (!f) return 0;
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return 0;
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return 0;
-            return fi.rettype.is_int() ? 1 : 0;
+        .column_int("return_is_int", [](const FuncRow& row) -> int {
+            return row.ensure_fi() && row.fi.rettype.is_int() ? 1 : 0;
         })
-        .column_int("return_is_integral", [](size_t i) -> int {
-            func_t* f = getn_func(i);
-            if (!f) return 0;
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return 0;
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return 0;
-            return fi.rettype.is_integral() ? 1 : 0;
+        .column_int("return_is_integral", [](const FuncRow& row) -> int {
+            return row.ensure_fi() && row.fi.rettype.is_integral() ? 1 : 0;
         })
-        .column_int("return_is_void", [](size_t i) -> int {
-            func_t* f = getn_func(i);
-            if (!f) return 0;
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return 0;
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return 0;
-            return fi.rettype.is_void() ? 1 : 0;
+        .column_int("return_is_void", [](const FuncRow& row) -> int {
+            return row.ensure_fi() && row.fi.rettype.is_void() ? 1 : 0;
         })
         // Prototype columns - arguments
-        .column_int("arg_count", [](size_t i) -> int {
-            func_t* f = getn_func(i);
-            if (!f) return 0;
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return 0;
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return 0;
-            return static_cast<int>(fi.size());
+        .column_int("arg_count", [](const FuncRow& row) -> int {
+            if (!row.ensure_fi()) return 0;
+            return static_cast<int>(row.fi.size());
         })
-        .column_text("calling_conv", [](size_t i) -> std::string {
-            func_t* f = getn_func(i);
-            if (!f) return "";
-            tinfo_t tif;
-            if (!get_func_tinfo(f->start_ea, tif) || !tif.is_func()) return "";
-            func_type_data_t fi;
-            if (!tif.get_func_details(&fi)) return "";
-            return get_cc_name(fi.get_cc());
+        .column_text("calling_conv", [](const FuncRow& row) -> std::string {
+            if (!row.ensure_fi()) return "";
+            return get_cc_name(row.fi.get_cc());
         })
-        .deletable([](size_t i) -> bool {
+        .deletable([](FuncRow& row) -> bool {
             auto_wait();
-            func_t* f = getn_func(i);
-            if (!f) return false;
-            bool ok = del_func(f->start_ea);
+            bool ok = del_func(row.start_ea);
             auto_wait();
             return ok;
         })
@@ -237,10 +206,10 @@ VTableDef define_funcs() {
                 return false;
 
             auto_wait();
-            // end_ea from col 3 if provided, else BADADDR (IDA auto-detects)
+            // end_ea from col 4 if provided, else BADADDR (IDA auto-detects)
             ea_t end = BADADDR;
-            if (argc > 3 && !argv[3].is_null())
-                end = static_cast<ea_t>(argv[3].as_int64());
+            if (argc > 4 && !argv[4].is_null())
+                end = static_cast<ea_t>(argv[4].as_int64());
 
             bool ok = add_func(ea, end);
             auto_wait();
@@ -1145,7 +1114,7 @@ void BytesAtIterator::column(xsql::FunctionContext& ctx, int col) {
             ctx.result_int(static_cast<int>(get_original_byte(ea_)));
             break;
         case 3: // size
-            ctx.result_int(get_item_size(ea_));
+            ctx.result_int(static_cast<int>(get_item_size(ea_)));
             break;
         case 4: // type
             ctx.result_text(get_item_type_str(ea_));
@@ -1193,7 +1162,7 @@ CachedTableDef<HeadRow> define_bytes() {
             return static_cast<int>(get_original_byte(row.ea));
         })
         .column_int("size", [](const HeadRow& row) -> int {
-            return get_item_size(row.ea);
+            return static_cast<int>(get_item_size(row.ea));
         })
         .column_text("type", [](const HeadRow& row) -> std::string {
             return get_item_type_str(row.ea);
@@ -1253,17 +1222,7 @@ CachedTableDef<PatchedByteInfo> define_patched_bytes() {
 // INSTRUCTIONS Table helpers and parsing
 // ============================================================================
 
-std::string trim_copy(const std::string& in) {
-    size_t begin = 0;
-    size_t end = in.size();
-    while (begin < end && std::isspace(static_cast<unsigned char>(in[begin])) != 0) {
-        ++begin;
-    }
-    while (end > begin && std::isspace(static_cast<unsigned char>(in[end - 1])) != 0) {
-        --end;
-    }
-    return in.substr(begin, end - begin);
-}
+// trim_copy is now in <idasql/string_utils.hpp>
 
 bool starts_with_ci(const std::string& text, const char* prefix) {
     if (!prefix) return false;
@@ -1784,7 +1743,7 @@ void instruction_column_common(xsql::FunctionContext& ctx, ea_t ea, ea_t func_ad
         return;
     }
     if (col == 3) {
-        ctx.result_int(get_item_size(ea));
+        ctx.result_int(static_cast<int>(get_item_size(ea)));
         return;
     }
     if (col >= kInstructionOperandBaseCol && col < (kInstructionOperandBaseCol + kInstructionOperandCount)) {
@@ -1956,7 +1915,7 @@ CachedTableDef<InstructionRow> define_instructions() {
             return mnem.c_str();
         })
         .column_int("size", [](const InstructionRow& row) -> int {
-            return get_item_size(row.ea);
+            return static_cast<int>(get_item_size(row.ea));
         });
 
     for (int opnum = 0; opnum < kInstructionOperandCount; ++opnum) {
@@ -2337,8 +2296,10 @@ void TableRegistry::invalidate_strings_cache_global() {
 }
 
 void TableRegistry::register_all(xsql::Database& db) {
+    // Cached tables with write support
+    register_cached_table(db, "funcs", &funcs);
+
     // Index-based tables (use IDA's indexed access)
-    register_index_table(db, "funcs", &funcs);
     register_index_table(db, "segments", &segments);
     register_index_table(db, "names", &names);
     register_index_table(db, "entries", &entries);

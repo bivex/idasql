@@ -14,6 +14,7 @@
 
 #include <xsql/json.hpp>
 #include "idapython_exec.hpp"
+#include <idasql/string_utils.hpp>
 #include <idasql/ui_context_provider.hpp>
 
 namespace idasql {
@@ -273,11 +274,7 @@ static std::string widget_type_name_or_unknown(twidget_type_t widget_type) {
     return out.str();
 }
 
-static std::string format_hex_ea(ea_t ea) {
-    std::ostringstream out;
-    out << "0x" << std::hex << static_cast<uint64>(ea);
-    return out.str();
-}
+using idasql::format_ea_hex;
 
 static xsql::json make_selection_object(const char* kind) {
     return xsql::json{
@@ -469,14 +466,14 @@ static bool extract_listing_selection(TWidget* viewer, xsql::json& out_selection
     if (selection_start.at != nullptr) {
         const ea_t start_ea = selection_start.at->toea();
         if (start_ea != BADADDR) {
-            selection["start"] = format_hex_ea(start_ea);
+            selection["start"] = format_ea_hex(start_ea);
         }
     }
 
     if (selection_end.at != nullptr) {
         const ea_t end_ea = selection_end.at->toea();
         if (end_ea != BADADDR) {
-            selection["end"] = format_hex_ea(end_ea);
+            selection["end"] = format_ea_hex(end_ea);
         }
     }
 
@@ -765,7 +762,7 @@ static void populate_code_context_json(const ContextSourceData& source, xsql::js
     if (source.current_ea != BADADDR) {
         xsql::json code_context = {
             {"has_address", true},
-            {"address", format_hex_ea(source.current_ea)}
+            {"address", format_ea_hex(source.current_ea)}
         };
 
         if (func_t* current_func = get_func(source.current_ea); current_func != nullptr) {
@@ -773,8 +770,8 @@ static void populate_code_context_json(const ContextSourceData& source, xsql::js
             const bool have_func_name = get_func_name(&func_name, current_func->start_ea) > 0;
             code_context["function"] = {
                 {"name", have_func_name ? func_name.c_str() : ""},
-                {"start", format_hex_ea(current_func->start_ea)},
-                {"end", format_hex_ea(current_func->end_ea)},
+                {"start", format_ea_hex(current_func->start_ea)},
+                {"end", format_ea_hex(current_func->end_ea)},
                 {"size", static_cast<uint64>(current_func->end_ea - current_func->start_ea)}
             };
         }
@@ -784,8 +781,8 @@ static void populate_code_context_json(const ContextSourceData& source, xsql::js
             const bool have_seg_name = get_segm_name(&seg_name, current_seg) > 0;
             code_context["segment"] = {
                 {"name", have_seg_name ? seg_name.c_str() : ""},
-                {"start", format_hex_ea(current_seg->start_ea)},
-                {"end", format_hex_ea(current_seg->end_ea)}
+                {"start", format_ea_hex(current_seg->start_ea)},
+                {"end", format_ea_hex(current_seg->end_ea)}
             };
         }
 

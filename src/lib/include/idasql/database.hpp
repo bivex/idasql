@@ -26,6 +26,7 @@
 #pragma once
 
 #include <idasql/platform.hpp>
+#include <idasql/string_utils.hpp>
 
 #include <xsql/database.hpp>
 #include <xsql/json.hpp>
@@ -207,7 +208,6 @@ public:
     const xsql::Database& database() const { return db_; }
 
 private:
-    static std::string trim_copy(const std::string& s);
     static std::string to_lower_copy(std::string value);
     static std::string strip_optional_quotes(const std::string& s);
     static bool parse_int_value(const std::string& text, int& value);
