@@ -800,7 +800,15 @@ Filter behavior:
 -- VIEWING: Use decompile() function, NOT the pseudocode table
 SELECT decompile(0x401000);
 
--- COMMENTING: Use pseudocode table to add/edit/delete comments
+-- COMMENTING: inspect anchors first; do not assume ea == func_addr
+SELECT line_num, ea, line, comment
+FROM pseudocode
+WHERE func_addr = 0x401000
+ORDER BY line_num;
+
+-- Use pseudocode table to add/edit/delete comments.
+-- The example updates below assume 0x401020 is an already resolved writable
+-- non-brace anchor, not a guessed function-entry row.
 -- Add inline comment (appears after semicolon)
 UPDATE pseudocode SET comment = 'buffer overflow here'
 WHERE func_addr = 0x401000 AND ea = 0x401020;
@@ -809,7 +817,8 @@ WHERE func_addr = 0x401000 AND ea = 0x401020;
 UPDATE pseudocode SET comment_placement = 'block1', comment = 'vulnerable call'
 WHERE func_addr = 0x401000 AND ea = 0x401020;
 
--- Delete a comment
+-- Delete a comment at a resolved anchor
+-- Warning: comment = NULL currently clears all placements at that ea.
 UPDATE pseudocode SET comment = NULL
 WHERE func_addr = 0x401000 AND ea = 0x401020;
 
@@ -2817,7 +2826,7 @@ WHERE calling_conv = 'fastcall' AND return_is_ptr = 1;
 | View function disassembly | `disasm_func(addr)` or `disasm_range(start, end)` |
 | View decompiled code | `decompile(addr)` |
 | UI/screen context questions | `get_ui_context_json()` (plugin UI only) |
-| Edit decompiler comments | `UPDATE pseudocode SET comment = '...' WHERE func_addr = X AND ea = Y` |
+| Edit decompiler comments | `Resolve writable pseudocode anchor, then UPDATE pseudocode SET comment = '...' WHERE func_addr = X AND ea = Y` |
 | AST pattern matching | `ctree WHERE func_addr = X` |
 | Call patterns | `ctree_v_calls`, `disasm_calls` |
 | Control flow | `ctree_v_loops`, `ctree_v_ifs` |
