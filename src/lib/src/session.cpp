@@ -4,10 +4,28 @@
 #include <idasql/database.hpp>
 
 #include <algorithm>
+#include <mutex>
 
 #include "ida_headers.hpp"
 
 namespace idasql {
+
+namespace {
+
+struct SessionLibraryInitState {
+    std::once_flag once;
+    int rc = -1;
+};
+
+int ensure_session_library_initialized() {
+    static SessionLibraryInitState state;
+    std::call_once(state.once, [&]() {
+        state.rc = init_library();
+    });
+    return state.rc;
+}
+
+} // namespace
 
 // ============================================================================
 // Session
@@ -17,9 +35,11 @@ Session::~Session() { close(); }
 
 bool Session::open(const char* idb_path) {
     if (engine_) close();
+    error_.clear();
 
-    // Initialize IDA library
-    int rc = init_library();
+    // Initialize the IDA runtime once per process. Repeated init_library()
+    // calls across fresh Session objects can corrupt the standalone test path.
+    int rc = ensure_session_library_initialized();
     if (rc != 0) {
         error_ = "Failed to initialize IDA library: " + std::to_string(rc);
         return false;
@@ -68,6 +88,7 @@ bool Session::open(const char* idb_path) {
         return false;
     }
 
+    error_.clear();
     return true;
 }
 
