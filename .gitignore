@@ -51,3 +51,6 @@ Makefile
 # Python
 __pycache__/
 *.py[cod]
+/.augment-tmp
+/scripts
+/tg
