@@ -28,7 +28,7 @@ bool Session::open(const char* idb_path) {
     // Open the database
     rc = open_database(idb_path, true, nullptr);
     if (rc != 0) {
-        error_ = "Failed to open database: " + std::string(idb_path);
+        error_ = "Failed to open database (rc=" + std::to_string(rc) + "): " + std::string(idb_path);
         return false;
     }
     ida_opened_ = true;
