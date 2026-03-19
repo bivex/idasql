@@ -50,14 +50,34 @@ function(add_idasql_example name)
             VS_DEBUGGER_ENVIRONMENT "PATH=${IDABIN_NATIVE};%PATH%"
         )
     elseif(APPLE)
+        get_filename_component(IDASQL_IDA_RUNTIME_DIR "${IDA_LIB_PATH}" DIRECTORY)
+        set(IDASQL_MACOS_APP_RUNTIME_DIR "" CACHE PATH
+            "Path to an installed IDA app Contents/MacOS directory for runtime dylibs")
+        set(IDASQL_MACOS_RPATHS "@executable_path")
+        set(_idasql_macos_runtime_dir "${IDASQL_MACOS_APP_RUNTIME_DIR}")
+        if(NOT _idasql_macos_runtime_dir)
+            file(GLOB _idasql_macos_runtime_candidates "/Applications/IDA Professional*.app/Contents/MacOS")
+            foreach(_candidate IN LISTS _idasql_macos_runtime_candidates)
+                if(EXISTS "${_candidate}/libida.dylib" AND EXISTS "${_candidate}/libidalib.dylib")
+                    set(_idasql_macos_runtime_dir "${_candidate}")
+                    break()
+                endif()
+            endforeach()
+        endif()
+        if(_idasql_macos_runtime_dir)
+            list(APPEND IDASQL_MACOS_RPATHS "${_idasql_macos_runtime_dir}")
+        endif()
+        list(APPEND IDASQL_MACOS_RPATHS "${IDASQL_IDA_RUNTIME_DIR}")
+        list(JOIN IDASQL_MACOS_RPATHS ";" IDASQL_MACOS_INSTALL_RPATH)
         set_target_properties(${name} PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH "@executable_path;$ENV{IDASDK}/src/bin"
+            INSTALL_RPATH "${IDASQL_MACOS_INSTALL_RPATH}"
         )
     elseif(UNIX)
+        get_filename_component(IDASQL_IDA_RUNTIME_DIR "${IDA_LIB_PATH}" DIRECTORY)
         set_target_properties(${name} PROPERTIES
             BUILD_WITH_INSTALL_RPATH TRUE
-            INSTALL_RPATH "$ORIGIN;$ENV{IDASDK}/src/bin"
+            INSTALL_RPATH "$ORIGIN;${IDASQL_IDA_RUNTIME_DIR}"
         )
     endif()
 endfunction()

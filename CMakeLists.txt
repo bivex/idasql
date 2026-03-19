@@ -11,6 +11,17 @@ set(CMAKE_POLICY_DEFAULT_CMP0169 OLD CACHE STRING "" FORCE) # Allow FetchContent
 
 include(FetchContent)
 
+# Verbose diagnostics for FetchContent git operations (useful when dependency
+# downloads appear to hang).
+option(IDASQL_FETCH_DEBUG "Enable verbose git/fetch diagnostics for FetchContent dependencies" OFF)
+if(IDASQL_FETCH_DEBUG)
+    set(FETCHCONTENT_QUIET OFF CACHE BOOL "Show FetchContent download/update logs" FORCE)
+    set(ENV{GIT_TRACE} 1)
+    set(ENV{GIT_CURL_VERBOSE} 1)
+    set(ENV{GIT_TRACE_PERFORMANCE} 1)
+    message(STATUS "idasql: Fetch debug enabled (GIT_TRACE=1, GIT_CURL_VERBOSE=1, GIT_TRACE_PERFORMANCE=1)")
+endif()
+
 # Output directories (only set if building standalone)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
@@ -64,13 +75,19 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../libxsql/CMakeLists.txt")
     message(STATUS "idasql: Added libxsql from sibling directory")
 else()
     # Standalone: FetchContent from GitHub
-    message(STATUS "idasql: Fetching libxsql from GitHub...")
+    message(STATUS "idasql: Fetching libxsql from https://github.com/0xeb/libxsql.git...")
+    set(FETCHCONTENT_QUIET OFF CACHE BOOL "Show FetchContent download/update logs" FORCE)
+    message(STATUS "idasql: FetchContent verbose logging enabled for libxsql (FETCHCONTENT_QUIET=OFF)")
     FetchContent_Declare(libxsql
         GIT_REPOSITORY https://github.com/0xeb/libxsql.git
         GIT_TAG        main
         GIT_SHALLOW    TRUE
+        GIT_PROGRESS   TRUE
     )
+    message(STATUS "idasql: Entering FetchContent_MakeAvailable(libxsql)")
     FetchContent_MakeAvailable(libxsql)
+    message(STATUS "idasql: Completed FetchContent_MakeAvailable(libxsql)")
+    message(STATUS "idasql: libxsql available at source='${libxsql_SOURCE_DIR}', binary='${libxsql_BINARY_DIR}'")
 endif()
 
 # Include directories
